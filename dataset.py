@@ -70,6 +70,7 @@ class Dataset(Dataset):
 
       with rasterio.open(image_path) as src:
         image = src.read().astype(np.float32)
+        image = image[:3,:,:]                           #prendiamo solo i canali RGB
         out_shape = (src.height,src.width)
         transform = src.transform
 
@@ -87,8 +88,9 @@ class Dataset(Dataset):
           mask = np.zeros(out_shape,dtype='uint8')
 
         if self.transform:
-          image = self.transform(image)
-          mask = self.tranform(mask)
+          augmented = self.transform (image=image, mask=mask)
+          image = augmented['image']
+          mask = augmented['mask']
 
         image_mask_list.append((image,mask))
     return image_mask_list
