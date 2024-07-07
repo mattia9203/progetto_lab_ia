@@ -26,6 +26,13 @@ import json
 from shapely.geometry import shape
 from rasterio.features import rasterize
 
+from torch.utils.data import Dataset
+import json
+from shapely.geometry import shape
+from rasterio.features import rasterize
+from datetime import datetime
+import re
+
 class Dataset(Dataset):
   def __init__(self,root,transform = None):
     self.root = root  #directory radice
@@ -55,46 +62,69 @@ class Dataset(Dataset):
             label_path = os.path.join(labels_dir,label_file)
 
             if os.path.exists(label_path):
-              image_label_pairs.append((image_path,label_path))
+
+                date_str = re.search(r'\d{4}_\d{2}', image_file).group()
+                date = datetime.strptime(date_str, '%Y_%m')
+                image_label_pairs.append((image_path, label_path, date))
+
+              #image_label_pairs.append((image_path,label_path))
+
+    image_label_pairs.sort(key=lambda x: x[2])
+    image_label_pairs = [(image_path, label_path) for image_path, label_path, date in image_label_pairs]
+    
     return image_label_pairs
 
 
   def __len__(self):
-    return sum(len(pairs) for pairs in self.zones.values())
+    return len(self.zones)
 
 
   def __getitem__(self,idx):
-    image_mask_list = []
-    for x in self.zones[idx]:
-      image_path,label_path = x
+    zone_keys = list(self.zones.keys())
+    zone = zone_keys[idx]
 
-      with rasterio.open(image_path) as src:
-        image = src.read().astype(np.float32)
-        image = image[:3,:,:]                           #prendiamo solo i canali RGB
-        out_shape = (src.height,src.width)
-        transform = src.transform
+    image_path1,label_path1 = self.zones[zone][0]
+    image_path2,label_path2 = self.zones[zone][-1]
+    
+    with rasterio.open(image_path1) as src1, rasterio.open(image_path2) as src2:
+      image1 = src1.read().astype(np.float32)[:3,:,:]
+      image2 = src2.read().astype(np.float32)[:3,:,:]
+      out_shape = (src1.height, src1.width)
 
-        with open(label_path) as label:
-          geojson = json.load(label)
+      with open(label_path1) as label1, open(label_path2) as label2:
+        geojson1 = json.load(label1)
+        geojson2 = json.load(label2)
 
+      mask1 = self.create_mask(geojson1, out_shape, src1.transform)
+      mask2 = self.create_mask(geojson2, out_shape, src2.transform)
+
+      if self.transform:
+        augmented1 = self.transform(image=image1, mask=mask1)
+        augmented2 = self.transform(image=image2, mask=mask2)
+        image1 = augmented1['image']
+        mask1 = augmented1['mask']
+        image2 = augmented2['image']
+        mask2 = augmented2['mask']
+
+
+    images = torch.cat((torch.from_numpy(image1),torch.from_numpy(image2)),dim=0).numpy().astype(np.float32)
+    masks = torch.logical_xor(torch.from_numpy(mask1),torch.from_numpy(mask2))
+    masks = masks.to(torch.uint8)
+
+    masks = masks.numpy().astype(np.float32)
+
+    return images, masks
+
+
+  def create_mask(self, geojson, out_shape, transform):
         if 'features' in geojson and len(geojson['features']) > 0:
-          gdf = gpd.GeoDataFrame.from_features(geojson['features'])
-          if not gdf.empty and gdf.geometry.notnull().any():
-
-            mask = rasterize( [(geom,1) for geom in gdf.geometry], out_shape=out_shape,transform=transform,fill=0,dtype='uint8')
-          else:
-            mask = np.zeros(out_shape,dtype='uint8')
+            gdf = gpd.GeoDataFrame.from_features(geojson['features'])
+            if not gdf.empty and gdf.geometry.notnull().any():
+                mask = rasterize([(geom, 1) for geom in gdf.geometry], out_shape=out_shape, transform=transform, fill=0, dtype='uint8')
+            else:
+                mask = np.zeros(out_shape, dtype='uint8')
         else:
-          mask = np.zeros(out_shape,dtype='uint8')
+            mask = np.zeros(out_shape, dtype='uint8')
+        return mask
 
-        if self.transform:
-          augmented = self.transform (image=image, mask=mask)
-          image = augmented['image']
-          mask = augmented['mask']
 
-        image_mask_list.append((image,mask))
-    return image_mask_list
-
-train_dataset = Dataset("/content/drive/MyDrive/Progetto_laboratorio/Dataset/train")
-test_dataset = Dataset("/content/drive/MyDrive/Progetto_laboratorio/Dataset/test")
-val_dataset = Dataset("/content/drive/MyDrive/Progetto_laboratorio/Dataset/validation")
