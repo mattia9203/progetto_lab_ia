@@ -23,7 +23,6 @@ import torch.nn as nn
 import torchvision.transforms.functional as TF
 from dataset import Dataset
 
-
 """#Implementazione modello
 
 """
@@ -31,19 +30,21 @@ from dataset import Dataset
 class DoubleConv(nn.Module):
   def __init__(self,in_channels,out_channels):
     super(DoubleConv,self).__init__()
-    #eseguiamo due convoluzioni 2d consecutive, ciascuna seguita da una normalizzazione batch e funzione di attivazione ReLu
+    #eseguiamo due convoluzioni 2d consecutive, ciascuna seguita da una normalizzazione batch e funzione di attivazione ReLU
     self.conv = nn.Sequential(nn.Conv2d(in_channels,out_channels,3,1,1,bias=False),       #convoluzione 2d con kernel size 3x3, stride e padding 1
                               nn.BatchNorm2d(out_channels),                               #normalizzazione batch utile per stabilizzare e accelerare training
-                              nn.ReLu(inplace=True),                                      #activation function applicata in-place
+                              nn.ReLU(inplace=True),                                      #activation function applicata in-place
                               nn.Conv2d(out_channels,out_channels,3,1,1,bias=False),
                               nn.BatchNorm2d(out_channels),
-                              nn.ReLu(inplace=True))
+                              nn.ReLU(inplace=True),
+    )
 
   def forward(self,x):
     return self.conv(x)
 
+
 class UNET(nn.Module):
-  def __init__(self,in_channels=6,out_channels=1, features=[64,128,256,512]):              #mettiamo 6 canali poichè per il problema di change detection dovremo passare le due immagini da analizzare concatenate sui tre canali
+  def __init__(self,in_channels=6,out_channels=1, features=[64,128,256,512],):              #mettiamo 6 canali poichè per il problema di change detection dovremo passare le due immagini da analizzare concatenate sui tre canali
     super(UNET,self).__init__()                                                                                          #features sta a indicare il numero di canali di output per ogni livello della rete
     self.ups = nn.ModuleList()                                       #usiamo modulelist perchè andremo a memorizzare dei livelli convoluzionali
     self.downs = nn.ModuleList()
@@ -56,12 +57,12 @@ class UNET(nn.Module):
 
     #parte alta della unet, cioè ricostruisce l'immagine segmentata partendo dalle caratteristiche estratte dalla parte bassa. Usa strati di convoluzione trasposta
 
-    for feature in reverse(features):
+    for feature in reversed(features):
       self.ups.append(nn.ConvTranspose2d(feature*2,feature,kernel_size=2,stride=2))
       self.ups.append(DoubleConv(feature*2,feature))
 
     self.bottleneck = DoubleConv(features[-1],features[-1]*2)                           #prende l'ultimo set di features maps e lo trasforma in un set con li doppio dei canali per catturare caratteristiche piu complesse
-    self.final_conv = NN.Conv2d(features[0],out_channels,kernel_size=1)                 #strato di convoluzione con kernel 1x1 per ridurre i canali al numero di classi di output desiderato
+    self.final_conv = nn.Conv2d(features[0],out_channels,kernel_size=1)                 #strato di convoluzione con kernel 1x1 per ridurre i canali al numero di classi di output desiderato
 
 
 #definisce come i dati di input x vengono trasformati attraverso la cnn per produrre l'output
@@ -80,9 +81,9 @@ class UNET(nn.Module):
     #itera sulla parte alta , quindi sui blocchi di convoluzione trasposta però in coppie
     for idx in range(0,len(self.ups),2):                        #iteriamo in passi di 2 perchè ogni livello ha la componente di conv transpose e doubleconv e a noi interessa solo la prima
       x = self.ups[idx](x)                                      #applica la conv transpose a x(upsampling)
-      skip_connections = skip_connections[idx//2]
-      if x.shape != skip_connections.shape:                     #verifichiamo se dimensioni corrispondono e in caso contrario ridimensioniamo x
-        x = TF.resize(x,size=skip_connections.shape[2:])
+      skip_connection = skip_connections[idx//2]
+      if x.shape != skip_connection.shape:                     #verifichiamo se dimensioni corrispondono e in caso contrario ridimensioniamo x
+        x = TF.resize(x,size=skip_connection.shape[2:])
 
       concat_skip = torch.cat((skip_connection,x),dim=1)       #concateniamo x con la skip connection lungo la dimensione del canale per combinare informazioni dettagliate della parte bassa con quelle della parte upsampled
       x = self.ups[idx+1](concat_skip)                         #applichiamo il blocco doubleconv

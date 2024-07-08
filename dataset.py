@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import fiona
 import os
+import cv2
 
 
 import rasterio
@@ -76,20 +77,36 @@ class Dataset(Dataset):
 
 
   def __len__(self):
-    return len(self.zones)
+    return len(list(self.zones.keys()))
+
+
+  def resize_image(self, image, target_size=(1024, 1024)):
+    return cv2.resize(image, target_size, interpolation=cv2.INTER_LINEAR)
+
 
 
   def __getitem__(self,idx):
+
+    if isinstance(idx,list):
+        idx = idx[0]
+
     zone_keys = list(self.zones.keys())
     zone = zone_keys[idx]
 
     image_path1,label_path1 = self.zones[zone][0]
     image_path2,label_path2 = self.zones[zone][-1]
-    
+
     with rasterio.open(image_path1) as src1, rasterio.open(image_path2) as src2:
       image1 = src1.read().astype(np.float32)[:3,:,:]
       image2 = src2.read().astype(np.float32)[:3,:,:]
       out_shape = (src1.height, src1.width)
+
+      if image1.shape[1:] != (1024, 1024):
+        image1 = self.resize_image(image1.transpose(1, 2, 0)).transpose(2, 0, 1)
+        out_shape = (image1.shape[1], image1.shape[2])
+      if image2.shape[1:] != (1024, 1024):
+        image2 = self.resize_image(image2.transpose(1, 2, 0)).transpose(2, 0, 1)
+        out_shape = (image2.shape[1], image2.shape[2])
 
       with open(label_path1) as label1, open(label_path2) as label2:
         geojson1 = json.load(label1)
@@ -98,20 +115,42 @@ class Dataset(Dataset):
       mask1 = self.create_mask(geojson1, out_shape, src1.transform)
       mask2 = self.create_mask(geojson2, out_shape, src2.transform)
 
+     
       if self.transform:
-        augmented1 = self.transform(image=image1, mask=mask1)
-        augmented2 = self.transform(image=image2, mask=mask2)
-        image1 = augmented1['image']
+        if not isinstance(image1,np.ndarray):
+            image1 = image1.numpy()
+        if not isinstance(image2,np.ndarray):
+            image2 = image2.numpy()
+            
+        if not isinstance(mask1,np.ndarray):
+            mask1 = mask1.numpy()
+        if not isinstance(mask2,np.ndarray):
+            mask2 = mask2.numpy()
+      
+        augmented1 = self.transform(image=np.transpose(image1,(1,2,0)), mask=mask1)
+        augmented2 = self.transform(image=np.transpose(image2,(1,2,0)), mask=mask2)
+        image1 = np.transpose(augmented1['image'],(2,1,0))
         mask1 = augmented1['mask']
-        image2 = augmented2['image']
+        image2 = np.transpose(augmented2['image'],(2,1,0))
         mask2 = augmented2['mask']
 
+    if not isinstance(image1,np.ndarray):
+      image1 = image1.numpy()
+    if not isinstance(image2,np.ndarray):
+      image2 = image2.numpy()
 
-    images = torch.cat((torch.from_numpy(image1),torch.from_numpy(image2)),dim=0).numpy().astype(np.float32)
-    masks = torch.logical_xor(torch.from_numpy(mask1),torch.from_numpy(mask2))
-    masks = masks.to(torch.uint8)
+    image1_tensor = torch.from_numpy(image1)
+    image2_tensor = torch.from_numpy(image2)
+    images = torch.cat([image1_tensor,image2_tensor],dim=0).numpy()
 
-    masks = masks.numpy().astype(np.float32)
+    if not isinstance(mask1,np.ndarray):
+      mask1 = mask1.numpy()
+    if not isinstance(mask2,np.ndarray):
+      mask2 = mask2.numpy()
+
+    mask1_tensor = torch.from_numpy(mask1)
+    mask2_tensor = torch.from_numpy(mask2)
+    masks = torch.logical_xor(mask1_tensor, mask2_tensor).to(torch.uint8).numpy()
 
     return images, masks
 
