@@ -80,10 +80,30 @@ class Dataset(Dataset):
     return len(list(self.zones.keys()))
 
 
-  def resize_image(self, image, target_size=(1024, 1024)):
+  def _resize_image(self, image, target_size=(1024, 1024)):
     return cv2.resize(image, target_size, interpolation=cv2.INTER_LINEAR)
 
 
+  def resize_image(self,image, new_shape, src_crs, dst_crs):
+    resized_image = np.zeros((image.shape[0], new_shape[0], new_shape[1]), dtype=np.float32)
+    for i in range(image.shape[0]):
+        resized_image[i] = rasterio.warp.reproject(
+            source=image[i],
+            destination=np.empty(new_shape, dtype=np.float32),
+            src_transform=rasterio.transform.from_bounds(0, 0, image.shape[2], image.shape[1], image.shape[2], image.shape[1]),
+            dst_transform=rasterio.transform.from_bounds(0, 0, new_shape[1], new_shape[0], new_shape[1], new_shape[0]),
+            src_crs=src_crs,
+            dst_crs=dst_crs,
+            resampling=Resampling.bilinear
+        )[0]
+    return resized_image
+
+  def resize_geojson(self,geojson, scale_factor):
+    for feature in geojson['features']:
+        geom = shape(feature['geometry'])
+        scaled_geom = scale(geom, xfact=scale_factor, yfact=scale_factor)
+        feature['geometry'] = mapping(scaled_geom)
+    return geojson
 
   def __getitem__(self,idx):
 
@@ -102,31 +122,47 @@ class Dataset(Dataset):
       out_shape = (src1.height, src1.width)
 
       if image1.shape[1:] != (1024, 1024):
-        image1 = self.resize_image(image1.transpose(1, 2, 0)).transpose(2, 0, 1)
+        image1 = self._resize_image(image1.transpose(1, 2, 0)).transpose(2, 0, 1)
         out_shape = (image1.shape[1], image1.shape[2])
       if image2.shape[1:] != (1024, 1024):
-        image2 = self.resize_image(image2.transpose(1, 2, 0)).transpose(2, 0, 1)
-        out_shape = (image2.shape[1], image2.shape[2])
+        image2 = self._resize_image(image2.transpose(1, 2, 0)).transpose(2, 0, 1)
+      out_shape = (image2.shape[1], image2.shape[2])
+
+      src_crs = src1.crs
+      dst_crs = src_crs
+
+      scale_factor = 512/1024
+      image1=self.resize_image(image1, (512,512), src_crs, dst_crs)
+      image2=self.resize_image(image2, (512,512), src_crs, dst_crs)
 
       with open(label_path1) as label1, open(label_path2) as label2:
         geojson1 = json.load(label1)
         geojson2 = json.load(label2)
 
-      mask1 = self.create_mask(geojson1, out_shape, src1.transform)
-      mask2 = self.create_mask(geojson2, out_shape, src2.transform)
+      print("GeoJSON1 preridimensionato:", len(geojson1['features']))
+      print("GeoJSON2 preridimensionato:", len(geojson2['features']))
 
-     
+      geojson1 = self.resize_geojson(geojson1, scale_factor)
+      geojson2 = self.resize_geojson(geojson2, scale_factor)
+
+      print("GeoJSON1 ridimensionato:", len(geojson1['features']))
+      print("GeoJSON2 ridimensionato:", len(geojson2['features']))
+
+      mask1 = self.create_mask(geojson1, (512,512), src1.transform)
+      mask2 = self.create_mask(geojson2, (512,512), src2.transform)
+
+
       if self.transform:
         if not isinstance(image1,np.ndarray):
             image1 = image1.numpy()
         if not isinstance(image2,np.ndarray):
             image2 = image2.numpy()
-            
+
         if not isinstance(mask1,np.ndarray):
             mask1 = mask1.numpy()
         if not isinstance(mask2,np.ndarray):
             mask2 = mask2.numpy()
-      
+
         augmented1 = self.transform(image=np.transpose(image1,(1,2,0)), mask=mask1)
         augmented2 = self.transform(image=np.transpose(image2,(1,2,0)), mask=mask2)
         image1 = np.transpose(augmented1['image'],(2,1,0))
@@ -140,18 +176,39 @@ class Dataset(Dataset):
       image2 = image2.numpy()
 
     image1_tensor = torch.from_numpy(image1)
+    print(image1_tensor.shape)
     image2_tensor = torch.from_numpy(image2)
-    images = torch.cat([image1_tensor,image2_tensor],dim=0).numpy()
+    if (image1_tensor.shape[0] != 3 and image1_tensor.shape[2] == 3):
+      image1_tensor = image1_tensor.permute(2,1,0)
+    if (image2_tensor.shape[0] != 3 and image2_tensor.shape[2] == 3):
+      image2_tensor = image2_tensor.permute(2,1,0)
+    if (image1_tensor.shape[0] != 3 and image1_tensor.shape[1] == 3):
+      image1_tensor = image1_tensor.permute(1,2,0)
+    if (image2_tensor.shape[0] != 3 and image2_tensor.shape[1] == 3):
+      image2_tensor = image2_tensor.permute(1,2,0)
+
+
+    images = torch.cat([image1_tensor,image2_tensor],dim=0)
+    print(images.shape)
 
     if not isinstance(mask1,np.ndarray):
       mask1 = mask1.numpy()
+    print(np.sum(mask1==1))
     if not isinstance(mask2,np.ndarray):
       mask2 = mask2.numpy()
+    print(np.sum(mask2==1))
 
     mask1_tensor = torch.from_numpy(mask1)
     mask2_tensor = torch.from_numpy(mask2)
     masks = torch.logical_xor(mask1_tensor, mask2_tensor).to(torch.uint8).numpy()
-
+    #print(images.shape)
+    #print(masks.shape)
+    if (images.shape[0] != 6 and images.shape[2]==6):
+        images.permute(2,1,0)
+    if (images.shape[0] != 6 and images.shape[1]==6):
+        images.permute(1,2,0)
+    print(np.sum(masks==1))
+    images=images.numpy()
     return images, masks
 
 
@@ -165,5 +222,3 @@ class Dataset(Dataset):
         else:
             mask = np.zeros(out_shape, dtype='uint8')
         return mask
-
-
