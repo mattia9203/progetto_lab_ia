@@ -27,31 +27,8 @@ def load_checkpoint(checkpoint, model):
     print("=> Loading checkpoint")
     model.load_state_dict(checkpoint["state_dict"])
 
-def check_precision(y_true, y_pred):
-    return precision_score(y_true, y_pred, average='weighted')
-
-def check_recall(y_true, y_pred):
-    return recall_score(y_true, y_pred, average='weighted')
-
-def check_f1(y_true, y_pred):
-    return f1_score(y_true, y_pred, average='weighted')
-
-def check_accuracy(y_true, y_pred):
-    return accuracy_score(y_true, y_pred)
-
-def check_metrics(y_true, y_pred):
-    precision = check_precision(y_true, y_pred)
-    recall = check_recall(y_true, y_pred)
-    f1 = check_f1(y_true, y_pred)
-    accuracy = check_accuracy(y_true, y_pred)
-    print("Precision : ",precision)
-    print("Recall : ",recall)
-    print("F1 : ",f1)
-    print("Accuracy : ",accuracy)
-    return precision, recall, f1, accuracy
-
   
-def calculate_metrics(loader,model,device='cuda'):
+def calculate_metrics(loader,model,best_threshold,is_train,device='cuda'):
   all_labels= []
   all_preds = []
   num_correct = 0
@@ -65,24 +42,24 @@ def calculate_metrics(loader,model,device='cuda'):
       preds = model(x)
       #print((preds>0.5).sum())
       preds = torch.sigmoid(preds)
-      print(preds)
-      preds = (preds > 0.5).float()
+      preds = (preds > best_threshold).float()
       #print(preds)
       num_correct += (preds==y).sum()
       num_pixels += torch.numel(preds)
       all_preds.extend(preds.cpu().numpy().flatten())
       all_labels.extend(y.cpu().numpy().flatten())
       
-      print((preds==1).sum())
-      print((y==1).sum())
+      #print((preds==1).sum())
+      #print((y==1).sum())
       
-  print(np.unique(all_labels))
-  print(np.unique(all_preds))
+  #print(np.unique(all_labels))
+  #print(np.unique(all_preds))
   accuracy = (num_correct/num_pixels).cpu().numpy()
   precision = precision_score(all_labels,all_preds,zero_division=1)
   recall = recall_score(all_labels,all_preds,zero_division=1)
   f1 = f1_score(all_labels,all_preds,zero_division=1)
-  print(confusion_matrix(all_labels,all_preds))
+  if is_train == False:
+    print(confusion_matrix(all_labels,all_preds))
   
   model.train()
   return accuracy,precision,recall,f1
