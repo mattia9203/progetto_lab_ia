@@ -11,12 +11,85 @@ import torch
 import torchvision
 from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score,confusion_matrix
 from sklearn.metrics import precision_recall_curve
-
+import seaborn as sns
 percorso =  "/content/drive/MyDrive/Progetto_laboratorio"
 import sys
 sys.path.append(percorso)
 from dataset import Dataset
 
+import os
+import matplotlib.pyplot as plt
+def plot_and_save_metrics(train_losses, val_losses, train_precisions, val_precisions, train_recalls, val_recalls, train_accuracies, val_accuracies, train_f1s, val_f1s, learning_rate, weight_decay, factor, output_dir):
+    epochs = range(1, len(train_losses) + 1)
+
+    plt.figure(figsize=(12, 8))
+
+    # Plot train and validation loss
+    plt.subplot(2, 1, 1)
+    plt.plot(epochs, train_losses, 'bo-', label='Train Loss')
+    plt.plot(epochs, val_losses, 'ro-', label='Validation Loss')
+    plt.title(f'Train and Validation Loss (Learning Rate: {learning_rate}, Weight Decay: {weight_decay}, Factor: {factor})')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+
+    # Plot precision, recall, accuracy, and F1-score
+    plt.subplot(2, 1, 2)
+    plt.plot(epochs, train_precisions, 'b-', label='Train Precision')
+    plt.plot(epochs, val_precisions, 'g-', label='Validation Precision')
+    plt.plot(epochs, train_recalls, 'm-', label='Train Recall')
+    plt.plot(epochs, val_recalls, 'r-', label='Validation Recall')
+    plt.plot(epochs, train_accuracies, 'c-', label='Train Accuracy')
+    plt.plot(epochs, val_accuracies, 'y-', label='Validation Accuracy')
+    plt.plot(epochs, train_f1s, 'k-', label='Train F1-score')
+    plt.plot(epochs, val_f1s, 'orange', label='Validation F1-score')
+    plt.title(f'Train and Validation Metrics (Learning Rate: {learning_rate}, Weight Decay: {weight_decay}, Factor: {factor})')
+    plt.xlabel('Epochs')
+    plt.ylabel('Metrics')
+    plt.legend()
+
+    plt.tight_layout()
+
+    # Save the plot
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    plt.savefig(os.path.join(output_dir, f'metrics_lr_{learning_rate}_wd_{weight_decay}_factor_{factor}.png'))
+    plt.close()
+
+def save_confusion_matrix(cm, output_dir, epoch, learning_rate, weight_decay, factor):
+    plt.figure(figsize=(10, 7))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+    plt.xlabel('Predicted')
+    plt.ylabel('True')
+    plt.title(f'Confusion Matrix - Epoch: {epoch}, lr: {learning_rate}, weight_decay: {weight_decay}, factor: {factor}')
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    plt.savefig(os.path.join(output_dir, f'confusion_matrix_epoch_{epoch}_lr_{learning_rate}_wd_{weight_decay}_factor_{factor}.png'))
+    plt.close()
+
+
+def plot_and_save_metrics_test(metrics, output_dir='outputs'):
+    # Assicurati che la cartella di output esista
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Nomi delle metriche
+    metric_names = ['Accuracy', 'Precision', 'Recall', 'F1-score']
+
+    # Crea i grafici
+    plt.figure(figsize=(10, 5))
+    plt.bar(metric_names, metrics, color=['blue', 'green', 'red', 'purple'])
+    plt.ylim(0, 1)
+    plt.xlabel('Metrics')
+    plt.ylabel('Scores')
+    plt.title('Model Performance on Test Set')
+
+    # Salva il grafico nella cartella di output
+    output_path = os.path.join(output_dir, 'model_performance_metrics.png')
+    plt.savefig(output_path)
+    plt.close()
+
+    print(f"Metrics plot saved to {output_path}")
 
 def save_checkpoint(state, filename="my_checkpoint.pth.tar"):
     print("=> Saving checkpoint")
@@ -28,7 +101,7 @@ def load_checkpoint(checkpoint, model):
     model.load_state_dict(checkpoint["state_dict"])
 
   
-def calculate_metrics(loader,model,best_threshold,is_train,device='cuda'):
+def calculate_metrics_val(loader,model,device='cuda'):
   all_labels= []
   all_preds = []
   num_correct = 0
@@ -42,7 +115,7 @@ def calculate_metrics(loader,model,best_threshold,is_train,device='cuda'):
       preds = model(x)
       #print((preds>0.5).sum())
       preds = torch.sigmoid(preds)
-      preds = (preds > best_threshold).float()
+      preds = (preds > 0.9).float()
       #print(preds)
       num_correct += (preds==y).sum()
       num_pixels += torch.numel(preds)
@@ -58,8 +131,42 @@ def calculate_metrics(loader,model,best_threshold,is_train,device='cuda'):
   precision = precision_score(all_labels,all_preds,zero_division=1)
   recall = recall_score(all_labels,all_preds,zero_division=1)
   f1 = f1_score(all_labels,all_preds,zero_division=1)
-  if is_train == False:
-    print(confusion_matrix(all_labels,all_preds))
+  
+  conf_mat=confusion_matrix(all_labels,all_preds)
+  
+  model.train()
+  return conf_mat,accuracy,precision,recall,f1
+  
+def calculate_metrics_train(loader,model,device='cuda'):
+  all_labels= []
+  all_preds = []
+  num_correct = 0
+  num_pixels = 0
+  model.eval()
+      
+  with torch.no_grad():
+    for x,y in loader:
+      x = x.to(device)
+      y = y.to(device).unsqueeze(1)
+      preds = model(x)
+      #print((preds>0.5).sum())
+      preds = torch.sigmoid(preds)
+      preds = (preds > 0.9).float()
+      #print(preds)
+      num_correct += (preds==y).sum()
+      num_pixels += torch.numel(preds)
+      all_preds.extend(preds.cpu().numpy().flatten())
+      all_labels.extend(y.cpu().numpy().flatten())
+      
+      #print((preds==1).sum())
+      #print((y==1).sum())
+      
+  #print(np.unique(all_labels))
+  #print(np.unique(all_preds))
+  accuracy = (num_correct/num_pixels).cpu().numpy()
+  precision = precision_score(all_labels,all_preds,zero_division=1)
+  recall = recall_score(all_labels,all_preds,zero_division=1)
+  f1 = f1_score(all_labels,all_preds,zero_division=1)
   
   model.train()
   return accuracy,precision,recall,f1

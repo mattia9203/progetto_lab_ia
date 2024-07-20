@@ -25,7 +25,7 @@ from shapely.affinity import scale
 from tqdm import tqdm
 
 class Dataset(Dataset):
-    def __init__(self, root, transform=None, patch_size=256, is_train=True):
+    def __init__(self, root, transform=None, patch_size=128, is_train=True):
         self.root = root
         self.transform = transform
         self.patch_size = patch_size
