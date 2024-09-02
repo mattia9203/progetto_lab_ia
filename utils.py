@@ -25,7 +25,7 @@ def plot_and_save_metrics(train_losses, val_losses, train_precisions, val_precis
     plt.figure(figsize=(12, 8))
 
     # Plot train and validation loss
-    plt.subplot(2, 1, 1)
+    plt.subplot(3, 1, 1)
     plt.plot(epochs, train_losses, 'bo-', label='Train Loss')
     plt.plot(epochs, val_losses, 'ro-', label='Validation Loss')
     plt.title(f'Train and Validation Loss (Learning Rate: {learning_rate}, Weight Decay: {weight_decay}, Factor: {factor})')
@@ -33,14 +33,21 @@ def plot_and_save_metrics(train_losses, val_losses, train_precisions, val_precis
     plt.ylabel('Loss')
     plt.legend()
 
-    # Plot precision, recall, accuracy, and F1-score
-    plt.subplot(2, 1, 2)
+    # Plot train and validation accuracy
+    plt.subplot(3, 1, 2)
+    plt.plot(epochs, train_accuracies, 'c-', label='Train Accuracy')
+    plt.plot(epochs, val_accuracies, 'y-', label='Validation Accuracy')
+    plt.title(f'Train and Validation Accuracy (Learning Rate: {learning_rate}, Weight Decay: {weight_decay}, Factor: {factor})')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy')
+    plt.legend()
+
+    # Plot precision, recall, and F1-score
+    plt.subplot(3, 1, 3)
     plt.plot(epochs, train_precisions, 'b-', label='Train Precision')
     plt.plot(epochs, val_precisions, 'g-', label='Validation Precision')
     plt.plot(epochs, train_recalls, 'm-', label='Train Recall')
     plt.plot(epochs, val_recalls, 'r-', label='Validation Recall')
-    plt.plot(epochs, train_accuracies, 'c-', label='Train Accuracy')
-    plt.plot(epochs, val_accuracies, 'y-', label='Validation Accuracy')
     plt.plot(epochs, train_f1s, 'k-', label='Train F1-score')
     plt.plot(epochs, val_f1s, 'orange', label='Validation F1-score')
     plt.title(f'Train and Validation Metrics (Learning Rate: {learning_rate}, Weight Decay: {weight_decay}, Factor: {factor})')
@@ -101,7 +108,8 @@ def load_checkpoint(checkpoint, model):
     model.load_state_dict(checkpoint["state_dict"])
 
   
-def calculate_metrics_val(loader,model,device='cuda'):
+  
+def calculate_metrics(loader,model,device='cuda',threshold=0.9):
   all_labels= []
   all_preds = []
   num_correct = 0
@@ -110,12 +118,16 @@ def calculate_metrics_val(loader,model,device='cuda'):
       
   with torch.no_grad():
     for x,y in loader:
+      if (x.shape[1] != 6 and x.shape[3] == 6):
+          x = x.permute(0,3,1,2)
+      if (x.shape[1] != 6 and x.shape[2] != 6):
+          x = x.permute(0,2,1,3)
       x = x.to(device)
       y = y.to(device).unsqueeze(1)
       preds = model(x)
       #print((preds>0.5).sum())
       preds = torch.sigmoid(preds)
-      preds = (preds > 0.9).float()
+      preds = (preds > threshold).float()
       #print(preds)
       num_correct += (preds==y).sum()
       num_pixels += torch.numel(preds)
@@ -128,47 +140,71 @@ def calculate_metrics_val(loader,model,device='cuda'):
   #print(np.unique(all_labels))
   #print(np.unique(all_preds))
   accuracy = (num_correct/num_pixels).cpu().numpy()
-  precision = precision_score(all_labels,all_preds,zero_division=1)
-  recall = recall_score(all_labels,all_preds,zero_division=1)
-  f1 = f1_score(all_labels,all_preds,zero_division=1)
-  
-  conf_mat=confusion_matrix(all_labels,all_preds)
-  
-  model.train()
-  return conf_mat,accuracy,precision,recall,f1
-  
-def calculate_metrics_train(loader,model,device='cuda'):
-  all_labels= []
-  all_preds = []
-  num_correct = 0
-  num_pixels = 0
-  model.eval()
-      
-  with torch.no_grad():
-    for x,y in loader:
-      x = x.to(device)
-      y = y.to(device).unsqueeze(1)
-      preds = model(x)
-      #print((preds>0.5).sum())
-      preds = torch.sigmoid(preds)
-      preds = (preds > 0.9).float()
-      #print(preds)
-      num_correct += (preds==y).sum()
-      num_pixels += torch.numel(preds)
-      all_preds.extend(preds.cpu().numpy().flatten())
-      all_labels.extend(y.cpu().numpy().flatten())
-      
-      #print((preds==1).sum())
-      #print((y==1).sum())
-      
-  #print(np.unique(all_labels))
-  #print(np.unique(all_preds))
-  accuracy = (num_correct/num_pixels).cpu().numpy()
-  precision = precision_score(all_labels,all_preds,zero_division=1)
-  recall = recall_score(all_labels,all_preds,zero_division=1)
-  f1 = f1_score(all_labels,all_preds,zero_division=1)
+  precision = precision_score(all_labels,all_preds,zero_division=0)
+  recall = recall_score(all_labels,all_preds,zero_division=0)
+  f1 = f1_score(all_labels,all_preds,zero_division=0)
   
   model.train()
   return accuracy,precision,recall,f1
   
+def calculate_metrics_with_threshold(loader, model, device='cuda'):
+    all_labels = []
+    all_preds = []
+    model.eval()
+    
+    with torch.no_grad():
+        for x, y in loader:
+            if (x.shape[1] != 6 and x.shape[3] == 6):
+                x = x.permute(0,3,1,2)
+            if (x.shape[1] != 6 and x.shape[2] != 6):
+                x = x.permute(0,2,1,3)
+            x = x.to(device)
+            y = y.to(device).unsqueeze(1)
+            preds = model(x)
+            preds = torch.sigmoid(preds)
+            all_preds.extend(preds.cpu().numpy().flatten())
+            all_labels.extend(y.cpu().numpy().flatten())
+    
+    all_preds = np.array(all_preds)
+    all_labels = np.array(all_labels)
+    
+    best_f1 = 0.0
+    best_threshold = 0.0
+    
+    for threshold in np.arange(0.5, 1.0, 0.01):
+        preds_threshold = (all_preds > threshold).astype(float)
+        f1 = f1_score(all_labels, preds_threshold, zero_division=0)
+        
+        if f1 >= best_f1:
+            best_f1 = f1
+            best_threshold = threshold
+            
+    model.train()
+    return best_f1, best_threshold
+  
+def calculate_confusion_matrix(loader,model,device='cuda',threshold=0.9):
+  all_labels= []
+  all_preds = []
+  
+  model.eval()
+      
+  with torch.no_grad():
+    for x,y in loader:
+      if (x.shape[1] != 6 and x.shape[3] == 6):
+          x = x.permute(0,3,1,2)
+      if (x.shape[1] != 6 and x.shape[2] != 6):
+          x = x.permute(0,2,1,3)
+      x = x.to(device)
+      y = y.to(device).unsqueeze(1)
+      preds = model(x)
+      #print((preds>0.5).sum())
+      preds = torch.sigmoid(preds)
+      preds = (preds > threshold).float()
+      #print(preds)
+      all_preds.extend(preds.cpu().numpy().flatten())
+      all_labels.extend(y.cpu().numpy().flatten())
+      
+      
+  conf_mat = confusion_matrix(all_labels,all_preds)
+  return conf_mat
   

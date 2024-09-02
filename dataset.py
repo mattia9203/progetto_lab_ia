@@ -11,7 +11,7 @@ Original file is located at
 import os
 import re
 import cv2
-
+import random
 import json
 import torch
 import numpy as np
@@ -25,7 +25,7 @@ from shapely.affinity import scale
 from tqdm import tqdm
 
 class Dataset(Dataset):
-    def __init__(self, root, transform=None, patch_size=128, is_train=True):
+    def __init__(self, root, transform=None, patch_size=256, is_train=True):
         self.root = root
         self.transform = transform
         self.patch_size = patch_size
@@ -80,29 +80,6 @@ class Dataset(Dataset):
                 mask1 = self.create_mask(geojson1, out_shape, src1.transform)
                 mask2 = self.create_mask(geojson2, out_shape, src2.transform)
 
-                if self.transform:
-                    if not isinstance(image1, np.ndarray):
-                        image1 = image1.numpy()
-                    if not isinstance(image2, np.ndarray):
-                        image2 = image2.numpy()
-
-                    if not isinstance(mask1, np.ndarray):
-                        mask1 = mask1.numpy()
-                    if not isinstance(mask2, np.ndarray):
-                        mask2 = mask2.numpy()
-
-                    augmented1 = self.transform(image=np.transpose(image1, (1, 2, 0)), mask=mask1)
-                    augmented2 = self.transform(image=np.transpose(image2, (1, 2, 0)), mask=mask2)
-                    image1 = np.transpose(augmented1['image'], (2, 1, 0))
-                    mask1 = augmented1['mask']
-                    image2 = np.transpose(augmented2['image'], (2, 1, 0))
-                    mask2 = augmented2['mask']
-                    
-                if not isinstance(image1,np.ndarray):
-                    image1 = image1.numpy()
-                if not isinstance(image2,np.ndarray):
-                    image2 = image2.numpy()
-                    
 
                 image1_tensor = torch.from_numpy(image1)
                 image2_tensor = torch.from_numpy(image2)
@@ -118,14 +95,12 @@ class Dataset(Dataset):
                 
                 if not isinstance(mask1,np.ndarray):
                     mask1 = mask1.numpy()
-                    #print(np.sum(mask1==1))
                 if not isinstance(mask2,np.ndarray):
                     mask2 = mask2.numpy()
-                    #print(np.sum(mask2==1))
 
                 mask1_tensor = torch.from_numpy(mask1)
                 mask2_tensor = torch.from_numpy(mask2)
-                masks = torch.logical_xor(mask1_tensor, mask2_tensor).to(torch.uint8).numpy()
+                masks = torch.logical_xor(mask1_tensor, mask2_tensor).to(torch.uint8)
                 
                 if (images.shape[0] != 6 and images.shape[2]==6):
                     images.permute(2,1,0)
@@ -133,63 +108,45 @@ class Dataset(Dataset):
                     images.permute(1,2,0)
                 
                 image_patches, mask_patches = self.divide_into_patches(images, masks, self.patch_size)
-                #patches.extend(zip(image_patches, mask_patches))
-
+                
         return image_patches,mask_patches
         
 
     def generate_patches(self):
         patches = []
+        
+
         for zone in self.zones.keys():
-            if self.is_train == True:
-                for i in range(0,len(self.zones[zone])-1,4):
+            selected_pairs = set()  # Per tenere traccia delle coppie già selezionate
+            num_images = len(self.zones[zone])
+            indices = list(range(num_images))
+
+            while len(selected_pairs) < (num_images // 2)-2:  # Assicurati di non selezionare più coppie di quante possibili
+                i = random.choice(indices)
+                max_interval = num_images - i - 1  # Numero massimo di mesi successivi disponibili
+                if max_interval == 0:
+                    continue  # Se non ci sono immagini successive disponibili, salta
+
+                interval = random.randint(1, max_interval)
+                j = i + interval
+                if (i, j) not in selected_pairs:
+                    selected_pairs.add((i, j))
                     image_path1, label_path1 = self.zones[zone][i]
-                    if (i+4 < len(self.zones[zone])):
-                        image_path2, label_path2 = self.zones[zone][i+4]
-                    else:
-                        image_path2, label_path2 = self.zones[zone][i+1]
-                        
-                    images_patches,mask_patches = self.generate_images_masks(image_path1,image_path2,label_path1,label_path2)
+                    image_path2, label_path2 = self.zones[zone][j]
+
+                    images_patches, mask_patches = self.generate_images_masks(image_path1, image_path2, label_path1, label_path2)
                     patches.extend(zip(images_patches, mask_patches))
+            
 
-            else:
-                image_path1, label_path1 = self.zones[zone][0]
-                image_path2, label_path2 = self.zones[zone][-1]
-
-                    
-                images_patches,mask_patches = self.generate_images_masks(image_path1,image_path2,label_path1,label_path2)
-                patches.extend(zip(images_patches, mask_patches))
         return patches
-
 
     def __len__(self):
         return len(self.patches)
 
-    def _resize_image(self, image, target_size=(1024, 1024)):
-        return cv2.resize(image, target_size, interpolation=cv2.INTER_LINEAR)
+    def _resize_image(self, image, target_size=(1024, 1024)):  
+        return cv2.resize(image, target_size, interpolation=cv2.INTER_LINEAR)           #ridimensiona l'immagine con l'interpolazione lineare, cioè calcola i nuovi pixel con una media ponderata dei pixel vicini
 
-    def resize_image(self, image, new_shape, src_crs, dst_crs):
-        resized_image = np.zeros((image.shape[0], new_shape[0], new_shape[1]), dtype=np.float32)
-        for i in range(image.shape[0]):
-            resized_image[i] = rasterio.warp.reproject(
-                source=image[i],
-                destination=np.empty(new_shape, dtype=np.float32),
-                src_transform=rasterio.transform.from_bounds(0, 0, image.shape[2], image.shape[1], image.shape[2], image.shape[1]),
-                dst_transform=rasterio.transform.from_bounds(0, 0, new_shape[1], new_shape[0], new_shape[1], new_shape[0]),
-                src_crs=src_crs,
-                dst_crs=dst_crs,
-                resampling=Resampling.bilinear
-            )[0]
-        return resized_image
-
-    def resize_geojson(self, geojson, scale_factor):
-        for feature in geojson['features']:
-            geom = shape(feature['geometry'])
-            scaled_geom = scale(geom, xfact=scale_factor, yfact=scale_factor)
-            feature['geometry'] = mapping(scaled_geom)
-        return geojson
-
-    def divide_into_patches(self, image, mask, patch_size):
+    def divide_into_patches(self, image, mask, patch_size,no_change_prob=0.3):
         patches = []
         mask_patches = []
         _, h, w = image.shape
@@ -198,13 +155,32 @@ class Dataset(Dataset):
                 image_patch = image[:, i:i+patch_size, j:j+patch_size]
                 mask_patch = mask[i:i+patch_size, j:j+patch_size]
                 if image_patch.shape[1] == patch_size and image_patch.shape[2] == patch_size:
-                  if np.sum(mask_patch==1)>0 or self.is_train == False:
-                    patches.append(image_patch)
-                    mask_patches.append(mask_patch)
+                    if np.sum(mask_patch.numpy() == 1) > 0 or (self.is_train and random.random() < no_change_prob) or not self.is_train:
+                        patches.append(image_patch)
+                        mask_patches.append(mask_patch)
         return patches, mask_patches
 
     def __getitem__(self, idx):
         image_patch, mask_patch = self.patches[idx]
+        
+
+        if self.transform:
+            
+            if (image_patch.shape[0] != 6 and image_patch.shape[2]==6):
+                image_patch.permute(2,1,0)
+            if (image_patch.shape[0] != 6 and image_patch.shape[1]==6):
+                image_patch.permute(1,2,0)
+                    
+            if not isinstance(image_patch, np.ndarray):
+                image_patch = image_patch.numpy()
+                
+            if not isinstance(mask_patch, np.ndarray):
+                mask_patch = mask_patch.numpy()
+
+            augmented = self.transform(image=np.transpose(image_patch, (1, 2, 0)), mask=mask_patch)
+            image_patch = np.transpose(augmented['image'], (2, 1, 0))
+            mask_patch=augmented['mask']
+            
         return image_patch, mask_patch
 
     def create_mask(self, geojson, out_shape, transform):
@@ -216,4 +192,7 @@ class Dataset(Dataset):
                 mask = np.zeros(out_shape, dtype='uint8')
         else:
             mask = np.zeros(out_shape, dtype='uint8')
+            
         return mask
+    def add_patches(self, patches):
+        self.patches.extend(patches)
