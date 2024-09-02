@@ -125,8 +125,8 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
 
 train_transform_aug = A.Compose([
     A.HorizontalFlip(p=0.5),                 # Esegue un flip orizzontale dell'immagine con probabilità del 50%
-    A.VerticalFlip(p=1.0),                   # Esegue un flip verticale dell'immagine con probabilità del 10%
-    A.Rotate(limit=180, p=1.0),               # Ruota l'immagine di un angolo casuale tra -35 e 35 gradi con probabilità del 100%
+    A.VerticalFlip(p=0.2),                   # Esegue un flip verticale dell'immagine con probabilità del 10%
+    A.Rotate(limit=180, p=0.8),               # Ruota l'immagine di un angolo casuale tra -35 e 35 gradi con probabilità del 100%
     #A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=45, p=0.5),
     #A.GaussianBlur(blur_limit=(3, 7), p=0.5),
     #A.RandomGamma(gamma_limit=(80, 120), p=0.5),
