@@ -34,9 +34,11 @@ class DoubleConv(nn.Module):
     self.conv = nn.Sequential(nn.Conv2d(in_channels,out_channels,3,1,1,bias=False),       #convoluzione 2d con kernel size 3x3, stride e padding 1
                               nn.BatchNorm2d(out_channels),                               #normalizzazione batch utile per stabilizzare e accelerare training
                               nn.ReLU(inplace=True),                                      #activation function applicata in-place
+                              #nn.Dropout(0.1),                                            #disattiva casualmente una frazione di neuroni, aiuta a prevenire overfitting
                               nn.Conv2d(out_channels,out_channels,3,1,1,bias=False),
                               nn.BatchNorm2d(out_channels),
                               nn.ReLU(inplace=True),
+                              #nn.Dropout(0.1),
     )
 
   def forward(self,x):
